@@ -1,0 +1,185 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-02-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readxl)
+c91_dat <- read_excel("c91.dat.xlsx")
+```
+
+
+```{r Clean Data}
+library(tidyverse)
+c91 <- c91_dat %>%
+  pivot_longer(cols = c(p1, p2, p3), values_to = 'PRE', names_to = 'Period') %>%
+  mutate(Period = as.factor(ifelse(Period == 'p1', 1, ifelse(Period == 'p2', 2, 3))), class = as.factor(class)) %>%
+  select(id, sex, class, Period, PRE) %>%
+  mutate(Group = ifelse((Period == 1 & class == 3), 'C', ifelse(Period == 2 & class == 1, 'C', ifelse(Period == 3 & class == 2, 'C', 'E'))))
+
+c91$Group = as.factor(c91$Group)
+
+hlt <- c91_dat %>%
+  pivot_longer(cols = c(h1, h2, h3), values_to = 'HLT', names_to = 'Period') %>%
+  mutate(Period = as.factor(ifelse(Period == 'h1', 1, ifelse(Period == 'h2', 2, 3))), class = as.factor(class), HLT = as.factor(HLT)) %>%
+  select(id, class, Period, HLT)
+
+c91 <- c91 %>%
+  inner_join(hlt, by = c('id', 'class', 'Period'))
+
+
+sds <- c91_dat %>%
+  pivot_longer(cols = c(s1, s2, s3), values_to = 'SDS', names_to = 'Period') %>%
+  mutate(Period = as.factor(ifelse(Period == 's1', 1, ifelse(Period == 's2', 2, 3))), class = as.factor(class)) %>%
+  select(id, class, Period, SDS)
+
+c91 <- c91 %>%
+  inner_join(sds, by = c('id', 'class', 'Period'))
+
+pst <- c91_dat %>%
+  pivot_longer(cols = c(f1, f2, f3), values_to = 'PST', names_to = 'Period') %>%
+  mutate(Period = as.factor(ifelse(Period == 'f1', 1, ifelse(Period == 'f2', 2, 3))), class = as.factor(class)) %>%
+  select(id, class, Period, PST)
+
+c91 <- c91 %>%
+  inner_join(pst, by = c('id', 'class', 'Period'))
+
+pref <- c91_dat %>%
+  select(id, t, k, a, v)
+
+c91 <- c91 %>%
+  left_join(pref, by = 'id')
+
+
+view(c91)
+```
+
+```{r Fit Model 1}
+library(lme4)
+library(lmerTest)
+
+
+
+
+mod1 <- lmer(PST~Group * PRE * Period + (1 | id) + (1 | class), data = c91)
+anova(mod1)
+
+difflsmeans(mod1, test.effs = "Group")
+
+
+```
+
+```{r Illustrating Conclusions}
+#illustrating conclusions:
+
+#Group E is higher than group C
+ggplot(mapping = aes(x = Group, y = PST), data = c91)+
+  geom_boxplot()+
+  labs(y = 'Post-test Score', title = 'Control vs. Experiment Post-test Scores:')
+
+
+#Period 1 has higher PST than other groups
+
+ggplot(mapping = aes(x = Period, y = PST), data = c91)+
+  geom_boxplot()+
+  labs(y = 'Post-test Score', title = 'Control vs. Experiment Post-test Scores:')
+
+
+#PRE is positively correlated with PST
+ggplot(data = c91, mapping = aes(x = PRE, y = PST))+geom_point()+geom_smooth(method = lm)
+
+
+#Period changes the effect that PST has on Group
+ggplot(mapping = aes(x = PRE, y = PST), data = c91)+
+  geom_point()+
+  geom_smooth(method = lm)+
+  facet_wrap(vars(Group)) +
+  labs(title = 'Relationship between Pre-test and Post-test, split by Group:', x = 'Pre-test', y = 'Post-test')
+
+
+```
+
+```{r Fit Model 2}
+library(ordinal)
+library(RVAideMemoire)
+library(emmeans)
+
+g1=as.numeric(c91$Group=='E')
+u2=as.numeric(c91$Period==2)
+u3=as.numeric(c91$Period==3)
+
+mod2 <- clmm(HLT~g1*u2+g1*u3+(1|id), data=c91)
+
+mod2.2 <- clmm(HLT~u2+u3+g1:u2+g1:u3+(1|id), data=c91)
+
+anova(mod2, mod2.2)
+
+mod2 <- clmm(HLT ~ Group * Period + (1|id), data = c91, threshold = 'equidistant')
+Anova.clmm(mod2, type = 'III')
+
+pairs(emmeans(mod2, specs = (~ Period | Group)), adjust = 'tukey')
+
+mod2.2 <- clmm(HLT ~ Group * Period + (1|id), data = c91, threshold = 'equidistant')
+Anova.clmm(mod2, type = 'III')
+```
+
+
+```{r Visualize model 2}
+
+ggplot(data = c91, mapping = aes(x = HLT))+geom_bar(aes(fill = Group), position = 'dodge')+facet_grid(cols = vars(Period))
+
+ggplot(data = c91, mapping = aes(x = HLT))+geom_bar(aes(fill = Period), position = 'fill')
+
+```
+
+
+```{r Fit Model 3}
+mod3 <- lmer(SDS ~ Group + PRE * Period + (1|id) + (1|class), data = c91)
+anova(mod3)
+
+difflsmeans(mod3, test.effs = 'Group')
+
+
+
+```
+
+```{r visualize model 3}
+
+ggplot(data = c91, mapping = aes(x = Group, y = SDS))+geom_boxplot()
+
+ggplot(data = c91, mapping = aes(x = PRE, y = SDS))+geom_point()+geom_smooth(method = lm)
+
+ggplot(data = c91, mapping = aes(x = Period, y = SDS))+geom_boxplot()
+
+ggplot(data = c91, mapping = aes(x = Period, y = SDS))+geom_dotplot(binaxis = 'y', stackdir = 'center', dotsize = 0.5)+facet_grid(rows = vars(Group))
+
+ggplot(data = c91, mapping = aes(x = PRE, y = SDS))+geom_point()+geom_smooth(method = lm)+facet_grid(rows = vars(Group), cols = vars(Period))
+```
+
+```{r Fit Model 4}
+
+mod4 <- lmer(PST ~ Group + t + k + a + v + Group:t + Group:k + Group:a + Group:v + PRE + (1|id) + (1|class), data = c91)
+anova(mod4)
+
+mod4.2 <- lmer(PST ~ Group + t + a + v + Group:t + Group:a + Group:v + PRE + (1|id) + (1|class), data = c91)
+anova(mod4.2)
+```
+
+```{r Visualize Model 4}
+
+ggplot(data = c91, mapping = aes(x = a, y = PST))+geom_point()+geom_smooth(method = lm)+facet_grid(cols = vars(Group)) + labs(y = 'Post-test', title = 'Auditory Preference by Post-test Score, grouped by Group:', x = 'Auditory Preference')
+
+ggplot(data = c91, mapping = aes(x = t, y = PST))+geom_point()+geom_smooth(method = lm)+facet_grid(cols = vars(Group)) + labs(y = 'Post-test', title = 'Tactile Preference by Post-test Score, grouped by Group:', x = 'Tactile Preference')
+
+ggplot(data = c91, mapping = aes(x = t, y = PST))+geom_point()+geom_smooth(method = lm) + labs(y = 'Post-test', title = 'Tactile Preference by Post-test Score', x = 'Tactile Preference')
+
+ggplot(data = c91, mapping = aes(x = v, y = PST))+geom_point()+geom_smooth(method = lm)+facet_grid(cols = vars(Group)) + labs(y = 'Post-test', title = 'Visual Preference by Post-test Score, grouped by Group:', x = 'Visual Preference')
+
+
+```
+
